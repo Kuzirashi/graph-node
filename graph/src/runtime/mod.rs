@@ -192,6 +192,51 @@ pub enum IndexForAscTypeId {
     ArrayF32 = 49,
     ArrayF64 = 50,
     ArrayBigDecimal = 51,
+
+    // Near Type IDs
+    //
+    // Generated with the following shell script:
+    //
+    // ```
+    // cat chain/near/src/runtime/generated.rs | grep IndexForAscTypeId::Near | grep -Eo "Near[a-zA-Z0-9]+" | awk '{for(x=1;x<=NF;x++)sub(/$/,"="++i+51",")}1' | sed 's/=/ = /'
+    // ```
+    //
+    // The `51` literal at the end in the `awk` should be replaced with the last element
+    // value in the list above.
+    NearArrayDataReceiver = 52,
+    NearArrayCryptoHash = 53,
+    NearArrayActionValue = 54,
+    NearArrayValidatorStake = 55,
+    NearArraySlashedValidator = 56,
+    NearArraySignature = 57,
+    NearArrayChunkHeader = 58,
+    NearSignature = 59,
+    NearPublicKey = 60,
+    NearFunctionCallPermission = 61,
+    NearFullAccessPermission = 62,
+    NearAccessKeyPermissionValue = 63,
+    NearAccessKey = 64,
+    NearDataReceiver = 65,
+    NearCreateAccountAction = 66,
+    NearDeployContractAction = 67,
+    NearFunctionCallAction = 68,
+    NearTransferAction = 69,
+    NearStakeAction = 70,
+    NearAddKeyAction = 71,
+    NearDeleteKeyAction = 72,
+    NearDeleteAccountAction = 73,
+    NearActionValue = 74,
+    NearActionReceipt = 75,
+    NearSuccessStatus = 76,
+    NearMerklePathItem = 77,
+    NearMerklePath = 78,
+    NearExecutionOutcome = 79,
+    NearSlashedValidator = 80,
+    NearBlockHeader = 81,
+    NearValidatorStake = 82,
+    NearChunkHeader = 83,
+    NearBlock = 84,
+    NearReceiptWithOutcome = 85,
 }
 
 impl ToAscObj<u32> for IndexForAscTypeId {

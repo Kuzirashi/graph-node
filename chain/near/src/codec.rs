@@ -24,8 +24,16 @@ impl LowerHex for &CryptoHash {
 }
 
 impl BlockWrapper {
-    fn parent_ptr(&self) -> Option<BlockPtr> {
-        let header = self.block.as_ref().unwrap().header.as_ref().unwrap();
+    pub fn block(&self) -> &pbcodec::Block {
+        self.block.as_ref().unwrap()
+    }
+
+    pub fn header(&self) -> &BlockHeader {
+        self.block().header.as_ref().unwrap()
+    }
+
+    pub fn parent_ptr(&self) -> Option<BlockPtr> {
+        let header = self.header();
 
         match (header.prev_hash.as_ref(), header.prev_height) {
             (Some(hash), number) => Some(BlockPtr::from((hash.into(), number))),
@@ -36,16 +44,13 @@ impl BlockWrapper {
 
 impl From<BlockWrapper> for BlockPtr {
     fn from(b: BlockWrapper) -> BlockPtr {
-        let header = b.block.as_ref().unwrap().header.as_ref().unwrap();
-        let hash: H256 = header.hash.as_ref().unwrap().into();
-
-        BlockPtr::from((hash, header.height))
+        (&b).into()
     }
 }
 
 impl<'a> From<&'a BlockWrapper> for BlockPtr {
     fn from(b: &'a BlockWrapper) -> BlockPtr {
-        let header = b.block.as_ref().unwrap().header.as_ref().unwrap();
+        let header = b.header();
         let hash: H256 = header.hash.as_ref().unwrap().into();
 
         BlockPtr::from((hash, header.height))
