@@ -10,25 +10,26 @@ services:
       - '8040:8040'
     depends_on:
       - ipfs
-      - postgres
+      - postgres-graph
     environment:
-      postgres_host: postgres
+      postgres_host: postgres-graph
       postgres_user: graph-node
       postgres_pass: let-me-in
       postgres_db: graph-node
       ipfs: 'ipfs:5001'
-      ethereum: 'mainnet:http://host.docker.internal:8545'
+      ethereum: 'local:no_eip1898,archive,traces:http://172.25.179.106:8024'
       GRAPH_LOG: info
+      GRAPH_GETH_ETH_CALL_ERRORS: 'invalid exit code 2;'
   ipfs:
     image: ipfs/go-ipfs:v0.4.23
     ports:
       - '5001:5001'
     volumes:
       - ./data/ipfs:/data/ipfs
-  postgres:
+  postgres-graph:
     image: postgres
     ports:
-      - '5432:5432'
+      - '5400:5432'
     command: ["postgres", "-cshared_preload_libraries=pg_stat_statements"]
     environment:
       POSTGRES_USER: graph-node
