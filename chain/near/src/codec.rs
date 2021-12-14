@@ -2,7 +2,7 @@
 mod pbcodec;
 
 use graph::{
-    blockchain::Block,
+    blockchain::Block as Blockchainblock,
     blockchain::BlockPtr,
     prelude::{hex, web3::types::H256, BlockNumber},
 };
@@ -23,13 +23,9 @@ impl LowerHex for &CryptoHash {
     }
 }
 
-impl BlockWrapper {
-    pub fn block(&self) -> &pbcodec::Block {
-        self.block.as_ref().unwrap()
-    }
-
+impl Block {
     pub fn header(&self) -> &BlockHeader {
-        self.block().header.as_ref().unwrap()
+        self.header.as_ref().unwrap()
     }
 
     pub fn parent_ptr(&self) -> Option<BlockPtr> {
@@ -42,14 +38,14 @@ impl BlockWrapper {
     }
 }
 
-impl From<BlockWrapper> for BlockPtr {
-    fn from(b: BlockWrapper) -> BlockPtr {
+impl From<Block> for BlockPtr {
+    fn from(b: Block) -> BlockPtr {
         (&b).into()
     }
 }
 
-impl<'a> From<&'a BlockWrapper> for BlockPtr {
-    fn from(b: &'a BlockWrapper) -> BlockPtr {
+impl<'a> From<&'a Block> for BlockPtr {
+    fn from(b: &'a Block) -> BlockPtr {
         let header = b.header();
         let hash: H256 = header.hash.as_ref().unwrap().into();
 
@@ -57,7 +53,7 @@ impl<'a> From<&'a BlockWrapper> for BlockPtr {
     }
 }
 
-impl Block for BlockWrapper {
+impl Blockchainblock for Block {
     fn number(&self) -> i32 {
         BlockNumber::try_from(self.header().height).unwrap()
     }
@@ -68,5 +64,15 @@ impl Block for BlockWrapper {
 
     fn parent_ptr(&self) -> Option<BlockPtr> {
         self.parent_ptr()
+    }
+}
+
+impl execution_outcome::Status {
+    pub fn is_success(&self) -> bool {
+        use execution_outcome::Status::*;
+        match self {
+            Unknown(_) | Failure(_) => false,
+            SuccessValue(_) | SuccessReceiptId(_) => true,
+        }
     }
 }

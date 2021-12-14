@@ -2,20 +2,22 @@ use ethereum::{EthereumNetworks, NodeCapabilities, ProviderEthRpcMetrics};
 use futures::future::join_all;
 use git_testament::{git_testament, render_testament};
 use graph::firehose::endpoints::{FirehoseEndpoint, FirehoseNetworkEndpoints, FirehoseNetworks};
-use graph::prelude::web3::types::H256;
 use graph::{ipfs_client::IpfsClient, prometheus::Registry};
 use lazy_static::lazy_static;
 use std::collections::BTreeMap;
 use std::io::{BufRead, BufReader};
 use std::path::Path;
 use std::str::FromStr;
+use std::sync::atomic;
 use std::time::Duration;
 use std::{collections::HashMap, env};
 use structopt::StructOpt;
 use tokio::sync::mpsc;
 
 use graph::blockchain::block_ingestor::BlockIngestor;
-use graph::blockchain::{Blockchain as _, BlockchainKind, BlockchainMap};
+use graph::blockchain::{
+    BlockHash, Blockchain as _, BlockchainKind, BlockchainMap, ChainIdentifier,
+};
 use graph::components::store::BlockStore;
 use graph::data::graphql::effort::LoadManager;
 use graph::log::logger;
@@ -115,6 +117,11 @@ async fn main() {
         "Graph Node version: {}",
         render_testament!(TESTAMENT)
     );
+
+    if opt.unsafe_config {
+        warn!(logger, "allowing unsafe configurations");
+        graph::env::UNSAFE_CONFIG.store(true, atomic::Ordering::SeqCst);
+    }
 
     let config = match Config::load(&logger, &opt.clone().into()) {
         Err(e) => {
@@ -510,15 +517,11 @@ async fn create_ethereum_networks(
 
                 use crate::config::Transport::*;
 
-                let (transport_event_loop, transport) = match web3.transport {
+                let transport = match web3.transport {
                     Rpc => Transport::new_rpc(&web3.url, web3.headers),
-                    Ipc => Transport::new_ipc(&web3.url),
-                    Ws => Transport::new_ws(&web3.url),
+                    Ipc => Transport::new_ipc(&web3.url).await,
+                    Ws => Transport::new_ws(&web3.url).await,
                 };
-
-                // If we drop the event loop the transport will stop working.
-                // For now it's fine to just leak it.
-                std::mem::forget(transport_event_loop);
 
                 let supports_eip_1898 = !web3.features.contains("no_eip1898");
 
@@ -598,10 +601,7 @@ async fn create_firehose_networks(
 async fn connect_networks(
     logger: &Logger,
     mut eth_networks: EthereumNetworks,
-) -> (
-    EthereumNetworks,
-    Vec<(String, Vec<EthereumNetworkIdentifier>)>,
-) {
+) -> (EthereumNetworks, Vec<(String, Vec<ChainIdentifier>)>) {
     // The status of a provider that we learned from connecting to it
     #[derive(PartialEq)]
     enum Status {
@@ -611,7 +611,7 @@ async fn connect_networks(
         },
         Version {
             network: String,
-            ident: EthereumNetworkIdentifier,
+            ident: ChainIdentifier,
         },
     }
 
@@ -659,7 +659,7 @@ async fn connect_networks(
     .await;
 
     // Group identifiers by network name
-    let idents: HashMap<String, Vec<EthereumNetworkIdentifier>> =
+    let idents: HashMap<String, Vec<ChainIdentifier>> =
         statuses
             .into_iter()
             .fold(HashMap::new(), |mut networks, status| {
@@ -677,11 +677,11 @@ async fn connect_networks(
     (eth_networks, idents)
 }
 
-// FIXME (NEAR): This is quite wrong, will need a refactor to remove the need to have a `EthereumNetworkIdentifier`
+// FIXME (NEAR): This is quite wrong, will need a refactor to remove the need to have a `ChainIdentifier`
 //               to create an actual `NetworkStore` (see `store_builder.network_store`).
 fn compute_near_network_identifiers(
     firehose_networks: Option<&FirehoseNetworks>,
-) -> Vec<(String, Vec<EthereumNetworkIdentifier>)> {
+) -> Vec<(String, Vec<ChainIdentifier>)> {
     match firehose_networks {
         None => vec![],
         Some(v) => v
@@ -690,14 +690,14 @@ fn compute_near_network_identifiers(
             .map(|(name, endpoint)| {
                 (
                     name,
-                    EthereumNetworkIdentifier {
-                        genesis_block_hash: H256::from([0x00; 32]),
+                    ChainIdentifier {
+                        genesis_block_hash: BlockHash::from(vec![]),
                         net_version: endpoint.provider.clone(),
                     },
                 )
             })
             .fold(
-                HashMap::<String, Vec<EthereumNetworkIdentifier>>::new(),
+                HashMap::<String, Vec<ChainIdentifier>>::new(),
                 |mut networks, (name, endpoint)| {
                     networks.entry(name.to_string()).or_default().push(endpoint);
                     networks
@@ -967,6 +967,7 @@ mod test {
             ethereum_rpc: network_args,
             ethereum_ws: vec![],
             ethereum_ipc: vec![],
+            unsafe_config: false,
         };
 
         let config = Config::load(&logger, &opt).expect("can create config");

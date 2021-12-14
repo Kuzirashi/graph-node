@@ -24,6 +24,9 @@ pub mod runtime;
 
 pub mod firehose;
 
+/// Helpers for parsing environment variables.
+pub mod env;
+
 /// Module with mocks for different parts of the system.
 pub mod mock {
     pub use crate::components::store::MockStore;
@@ -98,8 +101,8 @@ pub mod prelude {
     pub use crate::blockchain::BlockPtr;
 
     pub use crate::components::ethereum::{
-        EthereumBlock, EthereumBlockWithCalls, EthereumCall, EthereumNetworkIdentifier,
-        LightEthereumBlock, LightEthereumBlockExt,
+        EthereumBlock, EthereumBlockWithCalls, EthereumCall, LightEthereumBlock,
+        LightEthereumBlockExt,
     };
     pub use crate::components::graphql::{
         GraphQlRunner, QueryLoadManager, SubscriptionResultFuture,
@@ -194,4 +197,8 @@ pub mod prelude {
         EnumType, Type, Document, ScalarType, InputValue, DirectiveDefinition,
         UnionType, InputObjectType, EnumValue,
     });
+
+    pub mod r {
+        pub use crate::data::value::Value;
+    }
 }

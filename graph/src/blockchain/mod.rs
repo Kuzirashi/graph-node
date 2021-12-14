@@ -16,7 +16,7 @@ use crate::{
         store::{DeploymentLocator, StoredDynamicDataSource},
     },
     data::subgraph::UnifiedMappingApiVersion,
-    prelude::{DataSourceContext, SubgraphManifestValidationError},
+    prelude::DataSourceContext,
     runtime::{AscHeap, AscPtr, DeterministicHostError, HostExportError},
 };
 use crate::{
@@ -43,7 +43,7 @@ use std::{
 use web3::types::H256;
 
 pub use block_stream::{ChainHeadUpdateListener, ChainHeadUpdateStream, TriggersAdapter};
-pub use types::{BlockHash, BlockPtr};
+pub use types::{BlockHash, BlockPtr, ChainIdentifier};
 
 use self::block_stream::{BlockStream, BlockStreamMetrics};
 
@@ -61,6 +61,11 @@ pub trait Block: Send + Sync {
 
     fn parent_hash(&self) -> Option<BlockHash> {
         self.parent_ptr().map(|ptr| ptr.hash)
+    }
+
+    /// The data that should be stored for this block in the `ChainStore`
+    fn data(&self) -> Result<serde_json::Value, serde_json::Error> {
+        Ok(serde_json::Value::Null)
     }
 }
 
@@ -149,6 +154,12 @@ impl From<Error> for IngestorError {
     }
 }
 
+impl From<web3::Error> for IngestorError {
+    fn from(e: web3::Error) -> Self {
+        IngestorError::Unknown(anyhow::anyhow!(e))
+    }
+}
+
 #[async_trait]
 pub trait IngestorAdapter<C: Blockchain> {
     fn logger(&self) -> &Logger;
@@ -228,7 +239,7 @@ pub trait DataSource<C: Blockchain>:
     ) -> Result<Self, Error>;
 
     /// Used as part of manifest validation. If there are no errors, return an empty vector.
-    fn validate(&self) -> Vec<SubgraphManifestValidationError>;
+    fn validate(&self) -> Vec<Error>;
 }
 
 #[async_trait]

@@ -3,7 +3,7 @@ use graph::blockchain::BlockchainKind;
 use graph::data::subgraph::UnifiedMappingApiVersion;
 use graph::firehose::endpoints::FirehoseNetworkEndpoints;
 use graph::prelude::{
-    EthereumCallCache, LightEthereumBlock, LightEthereumBlockExt, StopwatchMetrics,
+    EthereumBlock, EthereumCallCache, LightEthereumBlock, LightEthereumBlockExt, StopwatchMetrics,
 };
 use graph::slog::debug;
 use graph::{
@@ -22,9 +22,9 @@ use graph::{
     firehose::bstream,
     log::factory::{ComponentLoggerConfig, ElasticComponentLoggerConfig},
     prelude::{
-        async_trait, error, lazy_static, o, web3::types::H256, BlockNumber, ChainStore,
-        EthereumBlockWithCalls, Future01CompatExt, Logger, LoggerFactory, MetricsRegistry, NodeId,
-        SubgraphStore,
+        async_trait, error, lazy_static, o, serde_json as json, web3::types::H256, BlockNumber,
+        ChainStore, EthereumBlockWithCalls, Future01CompatExt, Logger, LoggerFactory,
+        MetricsRegistry, NodeId, SubgraphStore,
     },
 };
 use prost::Message;
@@ -203,7 +203,6 @@ impl Chain {
             firehose_endpoint,
             firehose_cursor,
             firehose_mapper,
-            deployment.hash,
             adapter,
             filter,
             start_blocks,
@@ -418,6 +417,38 @@ impl Block for BlockFinality {
             BlockFinality::NonFinal(block) => block.ethereum_block.block.parent_ptr(),
         }
     }
+
+    fn data(&self) -> Result<json::Value, json::Error> {
+        // The serialization here very delicately depends on how the
+        // `ChainStore`'s `blocks` and `ancestor_block` return the data we
+        // store here. This should be fixed in a better way to ensure we
+        // serialize/deserialize appropriately.
+        //
+        // Commit #d62e9846 inadvertently introduced a variation in how
+        // chain stores store ethereum blocks in that they now sometimes
+        // store an `EthereumBlock` that has a `block` field with a
+        // `LightEthereumBlock`, and sometimes they just store the
+        // `LightEthereumBlock` directly. That causes issues because the
+        // code reading from the chain store always expects the JSON data to
+        // have the form of an `EthereumBlock`.
+        //
+        // Even though this bug is fixed now and we always use the
+        // serialization of an `EthereumBlock`, there are still chain stores
+        // in existence that used the old serialization form, and we need to
+        // deal with that when deserializing
+        //
+        // see also 7736e440-4c6b-11ec-8c4d-b42e99f52061
+        match self {
+            BlockFinality::Final(block) => {
+                let eth_block = EthereumBlock {
+                    block: block.clone(),
+                    transaction_receipts: vec![],
+                };
+                json::to_value(eth_block)
+            }
+            BlockFinality::NonFinal(block) => json::to_value(&block.ethereum_block),
+        }
+    }
 }
 
 pub struct DummyDataSourceTemplate;
@@ -510,7 +541,11 @@ impl TriggersAdapterTrait<Chain> for TriggersAdapter {
         ptr: BlockPtr,
         offset: BlockNumber,
     ) -> Result<Option<BlockFinality>, Error> {
-        let block = self.chain_store.ancestor_block(ptr, offset)?;
+        let block: Option<EthereumBlock> = self
+            .chain_store
+            .ancestor_block(ptr, offset)?
+            .map(json::from_value)
+            .transpose()?;
         Ok(block.map(|block| {
             BlockFinality::NonFinal(EthereumBlockWithCalls {
                 ethereum_block: block,
@@ -519,9 +554,7 @@ impl TriggersAdapterTrait<Chain> for TriggersAdapter {
         }))
     }
 
-    /// Panics if `block` is genesis.
-    /// But that's ok since this is only called when reverting `block`.
-    async fn parent_ptr(&self, block: &BlockPtr) -> Result<BlockPtr, Error> {
+    async fn parent_ptr(&self, block: &BlockPtr) -> Result<Option<BlockPtr>, Error> {
         use futures::stream::Stream;
         use graph::prelude::LightEthereumBlockExt;
 
@@ -537,10 +570,7 @@ impl TriggersAdapterTrait<Chain> for TriggersAdapter {
             .await?;
         assert_eq!(blocks.len(), 1);
 
-        // Expect: This is only called when reverting and therefore never for genesis.
-        Ok(blocks[0]
-            .parent_ptr()
-            .expect("genesis block cannot be reverted"))
+        Ok(blocks[0].parent_ptr())
     }
 }
 
@@ -592,6 +622,10 @@ impl FirehoseMapperTrait<Chain> for FirehoseMapper {
                     number: block.number as i32,
                 },
                 FirehoseCursor::Some(response.cursor.clone()),
+                Some(BlockPtr {
+                    hash: BlockHash::from(block.header.unwrap().parent_hash),
+                    number: (block.number.checked_sub(1).unwrap() as i32), // Will never receive undo on blocknum 0
+                }),
             )),
 
             bstream::ForkStep::StepIrreversible => {
@@ -667,14 +701,22 @@ impl IngestorAdapterTrait<Chain> for IngestorAdapter {
             .compat()
             .await?
             .ok_or_else(|| IngestorError::BlockUnavailable(block_hash))?;
-        let block = self
+        let ethereum_block = self
             .eth_adapter
             .load_full_block(&self.logger, block)
-            .compat()
             .await?;
 
+        // We need something that implements `Block` to store the block; the
+        // store does not care whether the block is final or not
+        let ethereum_block = BlockFinality::NonFinal(EthereumBlockWithCalls {
+            ethereum_block,
+            calls: None,
+        });
+
         // Store it in the database and try to advance the chain head pointer
-        self.chain_store.upsert_block(block).await?;
+        self.chain_store
+            .upsert_block(Arc::new(ethereum_block))
+            .await?;
 
         self.chain_store
             .cheap_clone()

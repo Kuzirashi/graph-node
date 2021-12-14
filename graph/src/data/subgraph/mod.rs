@@ -19,7 +19,7 @@ use crate::data::{
     schema::{Schema, SchemaImportError, SchemaValidationError},
     subgraph::features::validate_subgraph_features,
 };
-use crate::prelude::CheapClone;
+use crate::prelude::{r, CheapClone};
 use crate::{blockchain::DataSource, data::graphql::TryFromValue};
 use crate::{blockchain::DataSourceTemplate as _, data::query::QueryExecutionError};
 use crate::{
@@ -30,7 +30,7 @@ use crate::{
     },
 };
 
-use crate::prelude::{impl_slog_value, q, BlockNumber, Deserialize, Serialize};
+use crate::prelude::{impl_slog_value, BlockNumber, Deserialize, Serialize};
 
 use std::fmt;
 use std::ops::Deref;
@@ -60,11 +60,11 @@ lazy_static! {
     pub static ref MAX_SPEC_VERSION: Version = std::env::var("GRAPH_MAX_SPEC_VERSION")
         .ok()
         .and_then(|api_version_str| Version::parse(&api_version_str).ok())
-        .unwrap_or(SPEC_VERSION_0_0_3);
+        .unwrap_or(SPEC_VERSION_0_0_4);
     static ref MAX_API_VERSION: semver::Version = std::env::var("GRAPH_MAX_API_VERSION")
         .ok()
         .and_then(|api_version_str| semver::Version::parse(&api_version_str).ok())
-        .unwrap_or(semver::Version::new(0, 0, 5));
+        .unwrap_or(semver::Version::new(0, 0, 6));
 }
 
 /// Rust representation of the GraphQL schema for a `SubgraphManifest`.
@@ -176,7 +176,7 @@ impl<'de> de::Deserialize<'de> for DeploymentHash {
 }
 
 impl TryFromValue for DeploymentHash {
-    fn try_from_value(value: &q::Value) -> Result<Self, Error> {
+    fn try_from_value(value: &r::Value) -> Result<Self, Error> {
         Self::new(String::try_from_value(value)?)
             .map_err(|s| anyhow!("Invalid subgraph ID `{}`", s))
     }
@@ -207,8 +207,8 @@ impl SubgraphName {
 
         // Parse into components and validate each
         for part in s.split('/') {
-            // Each part must be non-empty and not too long
-            if part.is_empty() || part.len() > 32 {
+            // Each part must be non-empty
+            if part.is_empty() {
                 return Err(());
             }
 
@@ -363,8 +363,6 @@ pub enum SubgraphManifestValidationError {
     MultipleEthereumNetworks,
     #[error("subgraph must have at least one Ethereum network data source")]
     EthereumNetworkRequired,
-    #[error("subgraph data source has too many similar block handlers")]
-    DataSourceBlockHandlerLimitExceeded,
     #[error("the specified block must exist on the Ethereum network")]
     BlockNotFound(String),
     #[error("imported schema(s) are invalid: {0:?}")]
@@ -377,6 +375,8 @@ pub enum SubgraphManifestValidationError {
     DifferentApiVersions(BTreeSet<Version>),
     #[error(transparent)]
     FeatureValidationError(#[from] SubgraphFeatureValidationError),
+    #[error("data source {0} is invalid: {1}")]
+    DataSourceValidation(String, Error),
 }
 
 #[derive(Error, Debug)]
@@ -625,7 +625,9 @@ impl<C: Blockchain> UnvalidatedSubgraphManifest<C> {
         }
 
         for ds in &self.0.data_sources {
-            errors.extend(ds.validate());
+            errors.extend(ds.validate().into_iter().map(|e| {
+                SubgraphManifestValidationError::DataSourceValidation(ds.name().to_owned(), e)
+            }));
         }
 
         // For API versions newer than 0.0.5, validate that all mappings uses the same api_version
@@ -637,8 +639,6 @@ impl<C: Blockchain> UnvalidatedSubgraphManifest<C> {
             .0
             .data_sources
             .iter()
-            // FIXME (NEAR): Once more refactoring is merged in, this should go away as validation has been pushed to a chain specific check now
-            .filter(|d| d.kind().eq("ethereum/contract") || d.kind().eq("near/blocks"))
             .filter_map(|d| d.network().map(|n| n.to_string()))
             .collect::<Vec<String>>();
         networks.sort();
@@ -719,8 +719,6 @@ impl<C: Blockchain> SubgraphManifest<C> {
         // Assume the manifest has been validated, ensuring network names are homogenous
         self.data_sources
             .iter()
-            // FIXME (NEAR): Once more refactoring is merged in, this should go away as validation has been pushed to a chain specific check now
-            .filter(|d| d.kind() == "ethereum/contract" || d.kind() == "near/blocks")
             .filter_map(|d| d.network().map(|n| n.to_string()))
             .next()
             .expect("Validated manifest does not have a network defined on any datasource")
@@ -892,7 +890,7 @@ fn test_subgraph_name_validation() {
     assert!(SubgraphName::new("aaaa+aaaaa").is_err());
     assert!(SubgraphName::new("a/graphql").is_err());
     assert!(SubgraphName::new("graphql/a").is_err());
-    assert!(SubgraphName::new("this-component-is-longer-than-the-length-limit").is_err());
+    assert!(SubgraphName::new("this-component-is-very-long-but-we-dont-care").is_ok());
 }
 
 #[test]

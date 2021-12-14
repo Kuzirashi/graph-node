@@ -1,8 +1,8 @@
 use anyhow::{anyhow, Error};
 use anyhow::{ensure, Context};
-use ethabi::{Address, Contract, Event, Function, LogParam, ParamType, RawLog};
 use graph::blockchain::TriggerWithHandler;
 use graph::components::store::StoredDynamicDataSource;
+use graph::prelude::ethabi::StateMutability;
 use graph::prelude::futures03::future::try_join;
 use graph::prelude::futures03::stream::FuturesOrdered;
 use graph::prelude::{Entity, Link, SubgraphManifestValidationError};
@@ -11,14 +11,16 @@ use std::collections::BTreeMap;
 use std::str::FromStr;
 use std::{convert::TryFrom, sync::Arc};
 use tiny_keccak::{keccak256, Keccak};
-use web3::types::{Log, Transaction, H256};
 
 use graph::{
     blockchain::{self, Blockchain},
     prelude::{
-        async_trait, info, serde_json, BlockNumber, CheapClone, DataSourceTemplateInfo,
-        Deserialize, EthereumCall, LightEthereumBlock, LightEthereumBlockExt, LinkResolver, Logger,
-        TryStreamExt,
+        async_trait,
+        ethabi::{Address, Contract, Event, Function, LogParam, ParamType, RawLog},
+        info, serde_json,
+        web3::types::{Log, Transaction, H256},
+        BlockNumber, CheapClone, DataSourceTemplateInfo, Deserialize, EthereumCall,
+        LightEthereumBlock, LightEthereumBlockExt, LinkResolver, Logger, TryStreamExt,
     },
 };
 
@@ -26,6 +28,9 @@ use graph::data::subgraph::{calls_host_fn, DataSourceContext, Source};
 
 use crate::chain::Chain;
 use crate::trigger::{EthereumBlockTriggerType, EthereumTrigger, MappingTrigger};
+
+// The recommended kind is `ethereum`, `ethereum/contract` is accepted for backwards compatibility.
+const ETHEREUM_KINDS: &[&str] = &["ethereum/contract", "ethereum"];
 
 /// Runtime representation of a data source.
 // Note: Not great for memory usage that this needs to be `Clone`, considering how there may be tens
@@ -154,15 +159,22 @@ impl blockchain::DataSource<Chain> for DataSource {
         })
     }
 
-    fn validate(&self) -> Vec<graph::prelude::SubgraphManifestValidationError> {
+    fn validate(&self) -> Vec<Error> {
         let mut errors = vec![];
+
+        if !ETHEREUM_KINDS.contains(&self.kind.as_str()) {
+            errors.push(anyhow!(
+                "data source has invalid `kind`, expected `ethereum` but found {}",
+                self.kind
+            ))
+        }
 
         // Validate that there is a `source` address if there are call or block handlers
         let no_source_address = self.address().is_none();
         let has_call_handlers = !self.mapping.call_handlers.is_empty();
         let has_block_handlers = !self.mapping.block_handlers.is_empty();
         if no_source_address && (has_call_handlers || has_block_handlers) {
-            errors.push(SubgraphManifestValidationError::SourceAddressRequired);
+            errors.push(SubgraphManifestValidationError::SourceAddressRequired.into());
         };
 
         // Validate that there are no more than one of each type of block_handler
@@ -182,7 +194,7 @@ impl blockchain::DataSource<Chain> for DataSource {
             non_filtered_block_handler_count > 1 || call_filtered_block_handler_count > 1
         };
         if has_too_many_block_handlers {
-            errors.push(SubgraphManifestValidationError::DataSourceBlockHandlerLimitExceeded);
+            errors.push(anyhow!("data source has duplicated block handlers"));
         }
 
         errors
@@ -389,8 +401,8 @@ impl DataSource {
             .contract
             .functions()
             .filter(|function| match function.state_mutability {
-                ethabi::StateMutability::Payable | ethabi::StateMutability::NonPayable => true,
-                ethabi::StateMutability::Pure | ethabi::StateMutability::View => false,
+                StateMutability::Payable | StateMutability::NonPayable => true,
+                StateMutability::Pure | StateMutability::View => false,
             })
             .find(|function| {
                 // Construct the argument function signature:
