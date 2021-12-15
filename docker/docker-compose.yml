@@ -1,7 +1,7 @@
 version: '3'
 services:
   graph-node:
-    image: graphprotocol/graph-node
+    image: graphprotocol/graph-node:753cee7
     ports:
       - '8000:8000'
       - '8001:8001'
@@ -17,9 +17,10 @@ services:
       postgres_pass: let-me-in
       postgres_db: graph-node
       ipfs: 'ipfs:5001'
-      ethereum: 'local:no_eip1898,archive,traces:http://172.25.179.106:8024'
-      GRAPH_LOG: info
+      ethereum: 'godwoken-testnet:no_eip1898,archive,traces:http://godwoken-testnet-web3-rpc.ckbapp.dev'
+      GRAPH_LOG: debug
       GRAPH_GETH_ETH_CALL_ERRORS: 'invalid exit code 2;'
+      GRAPH_EXPERIMENTAL_FETCH_TXN_RECEIPTS_CONCURRENTLY: 'true'
   ipfs:
     image: ipfs/go-ipfs:v0.4.23
     ports:
